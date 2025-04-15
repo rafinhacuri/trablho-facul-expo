@@ -5,6 +5,7 @@ import {
 } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { Feather } from '@expo/vector-icons'
+import { useRouter } from 'expo-router'
 
 interface Task {
   id: string
@@ -12,11 +13,14 @@ interface Task {
   descricao: string
   data: string
   feita: boolean
+  email: string
 }
 
 const STORAGE_KEY = '@tasks'
 
 export default function TarefasScreen() {
+  const router = useRouter()
+  const [loggedUser, setLoggedUser] = useState<any>(null)
   const [tasks, setTasks] = useState<Task[]>([])
   const [nomeInserir, setNomeInserir] = useState('')
   const [descricaoInserir, setDescricaoInserir] = useState('')
@@ -30,16 +34,38 @@ export default function TarefasScreen() {
   const [toast, setToast] = useState('')
   const [showToast, setShowToast] = useState(false)
 
-  useEffect(() => { loadTasks() }, [])
+  useEffect(() => {
+    const init = async () => {
+      const user = await AsyncStorage.getItem('@logged')
+      if (user) {
+        const parsed = JSON.parse(user)
+        setLoggedUser(parsed)
+        loadTasks(parsed)
+      }
+    }
+    init()
+  }, [])
 
-  const loadTasks = async () => {
+  const loadTasks = async (user: any) => {
     const data = await AsyncStorage.getItem(STORAGE_KEY)
-    if (data) setTasks(JSON.parse(data))
+    if (data) {
+      const all = JSON.parse(data)
+      const userTasks = user.nivel === 'adm'
+        ? all
+        : all.filter((t: Task) => t.email === user.email)
+      setTasks(userTasks)
+    }
   }
 
   const saveTasks = async (newTasks: Task[]) => {
-    setTasks(newTasks)
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newTasks))
+    const data = await AsyncStorage.getItem(STORAGE_KEY)
+    const all = data ? JSON.parse(data) : []
+    const outros = loggedUser.nivel === 'adm'
+      ? all.filter((t: Task) => !newTasks.find(n => n.id === t.id))
+      : all.filter((t: Task) => t.email !== loggedUser.email)
+    const atualizadas = [...outros, ...newTasks]
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(atualizadas))
+    loadTasks(loggedUser)
   }
 
   const exibirToast = (mensagem: string) => {
@@ -60,20 +86,15 @@ export default function TarefasScreen() {
   }
 
   const handleAdd = () => {
-    if (!nomeInserir.trim()) {
-      exibirToast('Preencha o nome da tarefa')
-      return
-    }
-    if (!validarData(dataInserir)) {
-      exibirToast('Data inválida. Use o formato dd/mm/aaaa')
-      return
-    }
+    if (!nomeInserir.trim()) return exibirToast('Preencha o nome da tarefa')
+    if (!validarData(dataInserir)) return exibirToast('Data inválida. Use o formato dd/mm/aaaa')
     const nova: Task = {
       id: Date.now().toString(),
       nome: nomeInserir.trim(),
       descricao: descricaoInserir.trim(),
       data: dataInserir.trim(),
-      feita: false
+      feita: false,
+      email: loggedUser.email
     }
     saveTasks([...tasks, nova])
     setNomeInserir(''); setDescricaoInserir(''); setDataInserir('')
@@ -93,14 +114,8 @@ export default function TarefasScreen() {
 
   const handleSaveEdit = () => {
     if (!editId) return
-    if (!nomeEditar.trim()) {
-      exibirToast('Preencha o nome da tarefa')
-      return
-    }
-    if (!validarData(dataEditar)) {
-      exibirToast('Data inválida. Use o formato dd/mm/aaaa')
-      return
-    }
+    if (!nomeEditar.trim()) return exibirToast('Preencha o nome da tarefa')
+    if (!validarData(dataEditar)) return exibirToast('Data inválida. Use o formato dd/mm/aaaa')
     const atualizada = tasks.map(t =>
       t.id === editId
         ? { ...t, nome: nomeEditar.trim(), descricao: descricaoEditar.trim(), data: dataEditar.trim() }
@@ -125,12 +140,26 @@ export default function TarefasScreen() {
   }
 
   const handleToggleFeita = (id: string) => {
-    saveTasks(tasks.map(t => t.id === id ? { ...t, feita: !t.feita } : t))
+    const atualizadas = tasks.map(t => t.id === id ? { ...t, feita: !t.feita } : t)
+    saveTasks(atualizadas)
+  }
+
+  const logout = async () => {
+    await AsyncStorage.removeItem('@logged')
+    router.replace('/')
   }
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Text style={styles.titulo}>Minhas Tarefas</Text>
+
+      {loggedUser?.nivel === 'adm' && (
+        <View style={styles.navbar}>
+          <Pressable onPress={() => router.push('/admin')}>
+            <Text style={styles.link}>Ir para Admin</Text>
+          </Pressable>
+        </View>
+      )}
 
       <TextInput placeholder="Nome da tarefa" value={nomeInserir} onChangeText={setNomeInserir} style={styles.input} placeholderTextColor="#94a3b8" />
       <TextInput placeholder="Descrição" value={descricaoInserir} onChangeText={setDescricaoInserir} style={styles.input} placeholderTextColor="#94a3b8" />
@@ -207,6 +236,10 @@ export default function TarefasScreen() {
         )}
       />
 
+      <Pressable onPress={logout} style={{ marginTop: 20 }}>
+        <Text style={{ color: '#ef4444', textAlign: 'center' }}>Sair</Text>
+      </Pressable>
+
       {showToast && (
         <View style={styles.toast}>
           <Text style={styles.toastText}>{toast}</Text>
@@ -222,6 +255,8 @@ export default function TarefasScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc', padding: 20 },
   titulo: { fontSize: 24, fontWeight: 'bold', marginBottom: 20, color: '#0f172a' },
+  navbar: { flexDirection: 'row', justifyContent: 'center', marginBottom: 20 },
+  link: { color: '#3b82f6', fontWeight: 'bold' },
   input: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, padding: 10, marginBottom: 10, backgroundColor: '#fff' },
   botao: { paddingVertical: 12, borderRadius: 8, marginBottom: 10 },
   botaoTexto: { textAlign: 'center', color: '#fff', fontWeight: 'bold' },
@@ -234,9 +269,9 @@ const styles = StyleSheet.create({
   azul: { color: '#3b82f6', fontWeight: 'bold' },
   vermelho: { color: '#ef4444', fontWeight: 'bold' },
   modalFundo: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
-  modalCard: { backgroundColor: '#fff', padding: 20, borderRadius: 12, width: '85%', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 6 },
-  modalTitulo: { fontSize: 18, fontWeight: 'bold', color: '#1e293b', marginBottom: 12, textAlign: 'center' },
-  toast: { position: 'absolute', bottom: 20, left: 20, right: 20, backgroundColor: '#1e293b', padding: 14, borderRadius: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', elevation: 6 },
+  modalCard: { backgroundColor: '#fff', padding: 20, borderRadius: 12, width: '85%' },
+  modalTitulo: { fontSize: 18, fontWeight: 'bold', marginBottom: 12, textAlign: 'center', color: '#1e293b' },
+  toast: { position: 'absolute', bottom: 20, left: 20, right: 20, backgroundColor: '#1e293b', padding: 14, borderRadius: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   toastText: { color: '#fff', fontSize: 14, flex: 1 },
   toastFechar: { color: '#fff', fontWeight: 'bold', marginLeft: 12, fontSize: 18 }
 })
